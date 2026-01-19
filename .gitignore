@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# Project Outputs
+outputs/visualizations/*.png
+outputs/reports/*.md
+outputs/reports/*.csv
+!outputs/reports/.gitkeep
+!outputs/visualizations/.gitkeep
+
+# We might want to keep the directory structure but not the files
+# or just ignore the whole outputs folder if it's purely generated.
+# For now, I'll ignore the generated files but keep the folders if .gitkeep exists
+# (I'll need to create .gitkeep if I want that, but for now specific ignore is safer)
+
+# Mac
+.DS_Store
