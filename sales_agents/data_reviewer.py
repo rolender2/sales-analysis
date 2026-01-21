@@ -39,14 +39,17 @@ DO NOT inspect records one-by-one.
 - **Outliers**: Get Max Sales.
   `[{"$addFields": {"s": {"$toDouble": "$Sales"}}}, {"$group": {"_id": null, "max_sales": {"$max": "$s"}}}]`
 
-## 3. Generate Report (data_review_report.md)
-Save a comprehensive, professional `data_review_report.md`. It must be detailed (approx. 500 words).
-Include independent sections for:
+## 3. Generate Report
+MANDATORY: You MUST call `save_report` with EXACTLY this filename: `data_review_report.md`.
+
+The report must be detailed (approx. 500 words) and include:
 - **Executive Summary**: High-level health check of the data.
 - **Structural Integrity**: Detailed audit of types, nulls, and schema consistency.
 - **Value Distribution**: Deep dive into the numbers (ranges, averages, negative values).
 - **Anomalies & Outliers**: Specific list of suspicious records found.
 - **Cleaning Strategy**: Detailed recommended actions for the cleaning agent.
+
+FINAL STEP: Call `save_report("data_review_report.md", <your_markdown_content>)`.
 """
 
 

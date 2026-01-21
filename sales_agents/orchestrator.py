@@ -67,25 +67,23 @@ When you receive a request to run the pipeline:
    - Transfer control to clean the data
    - Wait for completion
 
-3. **Handoff to DataAnalyst**
-   - Say "Data cleaning complete. Starting analysis phase..."
+3. **STOP - User Approval Required**
+   - **CRITICAL**: Do NOT proceed to DataAnalyst or Forecaster.
+   - Say: "Data cleaning proposal generated. Please review 'cleaning_proposal.csv' and apply changes in the UI before continuing."
+   - **Terminate execution** here. The user must manually trigger the next stages (Analysis/Forecasting) after they are satisfied with the data.
+
+## Important - Resume Protocol:
+If the user explicitly asks to "Run Analysis" or "Run Forecasting" (implying data is clean), ONLY THEN proceed to those agents.
+
+4. **Handoff to DataAnalyst** (Only if explicitly requested)
+   - Say "Starting analysis phase..."
    - Transfer control for analysis
    - Wait for completion
 
-4. **Handoff to Forecaster**
-   - Say "Analysis complete. Starting forecasting phase..."
+5. **Handoff to Forecaster** (Only if explicitly requested)
+   - Say "Starting forecasting phase..."
    - Transfer control for forecasting
    - Wait for completion
-
-5. **Generate Executive Summary**
-   After all agents complete, create an executive summary that:
-   - Summarizes key findings from each phase
-   - Highlights critical data quality issues found
-   - Presents top insights from analysis
-   - Summarizes forecast predictions
-   - Lists all generated reports and visualizations
-   
-   Save using `save_report` with filename "executive_summary.md"
 
 ## Handoff Usage:
 

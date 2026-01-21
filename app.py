@@ -60,26 +60,27 @@ def get_models_for_provider(provider: str):
 
 
 def load_report(filename: str) -> str:
-    """Load a report file content. Supports split files (e.g., report_part1.md)."""
+    """Load a report file content. Supports split files (e.g., report_part2.md)."""
     filepath = REPORTS_DIR / filename
+    full_content = []
     
-    # Case 1: File exists directly
+    # Load main file if it exists
     if filepath.exists():
         with open(filepath, "r", encoding="utf-8") as f:
-            return f.read()
-            
-    # Case 2: Check for split files (filename_part1.md, etc.)
+            full_content.append(f.read())
+    
+    # Always check for additional part files (e.g., forecast_report_part2.md)
     if filename.endswith(".md"):
         base_name = filename[:-3]
         pattern = f"{base_name}_part*.md"
         parts = sorted(list(REPORTS_DIR.glob(pattern)))
         
-        if parts:
-            full_content = []
-            for part in parts:
-                with open(part, "r", encoding="utf-8") as f:
-                    full_content.append(f.read())
-            return "\n\n".join(full_content)
+        for part in parts:
+            with open(part, "r", encoding="utf-8") as f:
+                full_content.append(f.read())
+    
+    if full_content:
+        return "\n\n---\n\n".join(full_content)
             
     return f"*Report not found: {filename}*\n\nRun the pipeline to generate reports."
 
@@ -180,11 +181,104 @@ async def run_agent_async(agent_name: str, prompt: str, provider: str, model: st
     return result.final_output, trace_url
 
 
-def run_pipeline_sync(provider: str, model: str, progress=gr.Progress()):
-    """Run the full pipeline with isolated contexts per agent but grouped traces."""
-    import uuid
+def run_pipeline_phase1(provider: str, model: str, progress=gr.Progress()):
+    """Run Phase 1 of pipeline: Data Review and Data Cleaning.
+    Halts after cleaning for user approval before proceeding to analysis."""
     
     async def _run():
+        from agents import Runner
+        from agents.tracing import trace, set_tracing_export_api_key
+        from sales_agents.data_reviewer import create_data_reviewer
+        from sales_agents.data_cleaner import create_data_cleaner
+        
+        if OPENAI_API_KEY:
+            set_tracing_export_api_key(OPENAI_API_KEY)
+        
+        results = []
+        
+        # Create a unique group ID for this pipeline run
+        pipeline_id = f"pipeline_{uuid.uuid4().hex[:8]}"
+        trace_url = None
+        
+        # Stage 1: Data Reviewer (fresh context)
+        progress(0.2, desc="Running Data Reviewer...")
+        reviewer = create_data_reviewer(provider, model)
+        with trace("1. Data Reviewer", group_id=pipeline_id) as t1:
+            if trace_url is None:
+                trace_url = f"https://platform.openai.com/traces?group_id={pipeline_id}"
+            r1 = await Runner.run(reviewer, "Profile the superstore.sales collection.", max_turns=30)
+        results.append(("Data Review", "✅"))
+        
+        # Stage 2: Data Cleaner (fresh context)
+        progress(0.6, desc="Running Data Cleaner...")
+        cleaner = create_data_cleaner(provider, model)
+        with trace("2. Data Cleaner", group_id=pipeline_id) as t2:
+            r2 = await Runner.run(cleaner, "Clean the sales data and create sales_cleaned.", max_turns=60)
+        results.append(("Data Cleaning", "✅"))
+        
+        progress(1.0, desc="Phase 1 Complete - Review cleaning proposal!")
+        results.append(("⏸️ HALTED", "Review proposal, then click 'Apply Changes' to fix data and generate Data Quality Certificate"))
+        return results, trace_url, pipeline_id
+    
+    return asyncio.run(_run())
+
+
+def run_pipeline_phase2(provider: str, model: str, pipeline_id: str = None, progress=gr.Progress()):
+    """Run Phase 2 of pipeline: Data Analysis and Forecasting.
+    Should only be run after user approves the cleaning proposal."""
+    
+    async def _run():
+        from agents import Runner
+        from agents.tracing import trace, set_tracing_export_api_key
+        from sales_agents.data_analyst import create_data_analyst
+        from sales_agents.forecaster import create_forecaster
+        
+        if OPENAI_API_KEY:
+            set_tracing_export_api_key(OPENAI_API_KEY)
+        
+        results = []
+        
+        # Use existing pipeline ID or create new one
+        if not pipeline_id:
+            pid = f"pipeline_{uuid.uuid4().hex[:8]}"
+        else:
+            pid = pipeline_id
+        trace_url = f"https://platform.openai.com/traces?group_id={pid}"
+        
+        # Stage 3A: Visualizer (fresh context)
+        progress(0.2, desc="Running Visualizer (Generating Charts)...")
+        from sales_agents.visualizer import create_visualizer
+        visualizer = create_visualizer(provider, model)
+        with trace("3A. Visualizer", group_id=pid) as t3a:
+            r3a = await Runner.run(visualizer, "Generate 22 visualizations for the sales analysis.", max_turns=80)
+        results.append(("Visualizations", "✅"))
+
+        # Stage 3B: Data Analyst aka Strategist (fresh context)
+        progress(0.5, desc="Running Strategist (Writing Report)...")
+        analyst = create_data_analyst(provider, model)
+        with trace("3B. Strategist", group_id=pid) as t3b:
+            r3b = await Runner.run(analyst, "Write the 2000-word analysis.md report based on the visualizations.", max_turns=100)
+        results.append(("Analysis", "✅"))
+        
+        # Stage 4: Forecaster (fresh context)
+        progress(0.8, desc="Running Forecaster...")
+        forecaster = create_forecaster(provider, model)
+        with trace("4. Forecaster", group_id=pid) as t4:
+            r4 = await Runner.run(forecaster, "Generate sales forecasts.", max_turns=80)
+        results.append(("Forecasting", "✅"))
+        
+        progress(1.0, desc="Pipeline complete!")
+        return results, trace_url
+    
+    return asyncio.run(_run())
+
+
+def run_full_pipeline(provider: str, model: str, progress=gr.Progress()):
+    """Run the full pipeline without halting (legacy behavior)."""
+    
+    async def _run():
+        from agents import Runner
+        from agents.tracing import trace, set_tracing_export_api_key
         from sales_agents.data_reviewer import create_data_reviewer
         from sales_agents.data_cleaner import create_data_cleaner
         from sales_agents.data_analyst import create_data_analyst
@@ -199,30 +293,30 @@ def run_pipeline_sync(provider: str, model: str, progress=gr.Progress()):
         pipeline_id = f"pipeline_{uuid.uuid4().hex[:8]}"
         trace_url = None
         
-        # Stage 1: Data Reviewer (fresh context)
+        # Stage 1: Data Reviewer
         progress(0.1, desc="Running Data Reviewer...")
         reviewer = create_data_reviewer(provider, model)
         with trace("1. Data Reviewer", group_id=pipeline_id) as t1:
             if trace_url is None:
                 trace_url = f"https://platform.openai.com/traces?group_id={pipeline_id}"
-            r1 = await Runner.run(reviewer, "Profile the superstore.sales collection.", max_turns=20)
+            r1 = await Runner.run(reviewer, "Profile the superstore.sales collection.", max_turns=30)
         results.append(("Data Review", "✅"))
         
-        # Stage 2: Data Cleaner (fresh context)
+        # Stage 2: Data Cleaner
         progress(0.3, desc="Running Data Cleaner...")
         cleaner = create_data_cleaner(provider, model)
         with trace("2. Data Cleaner", group_id=pipeline_id) as t2:
-            r2 = await Runner.run(cleaner, "Clean the sales data and create sales_cleaned.", max_turns=20)
+            r2 = await Runner.run(cleaner, "Clean the sales data and create sales_cleaned.", max_turns=30)
         results.append(("Data Cleaning", "✅"))
         
-        # Stage 3: Data Analyst (fresh context)
+        # Stage 3: Data Analyst
         progress(0.6, desc="Running Data Analyst...")
         analyst = create_data_analyst(provider, model)
         with trace("3. Data Analyst", group_id=pipeline_id) as t3:
             r3 = await Runner.run(analyst, "Analyze the sales data with visualizations.", max_turns=60)
         results.append(("Analysis", "✅"))
         
-        # Stage 4: Forecaster (fresh context)
+        # Stage 4: Forecaster
         progress(0.9, desc="Running Forecaster...")
         forecaster = create_forecaster(provider, model)
         with trace("4. Forecaster", group_id=pipeline_id) as t4:
@@ -273,24 +367,32 @@ def create_dashboard_tab():
             outputs=[total_records, total_sales, unique_customers, categories, collection_info],
         )
         
-        # Load stats on page load
         gr.Markdown("---")
         gr.Markdown("### 🚀 Run Analysis Pipeline")
+        gr.Markdown("*Phase 1 runs Review + Clean, then halts for approval. Phase 2 runs Analysis + Forecasting.*")
         
         with gr.Row():
             pipeline_provider = gr.Dropdown(
                 choices=list(LLM_PROVIDERS.keys()),
-                value="openai",
+                value="deepseek",
                 label="LLM Provider",
             )
             pipeline_model = gr.Dropdown(
-                choices=get_models_for_provider("openai"),
-                value="gpt-4-turbo",
+                choices=get_models_for_provider("deepseek"),
+                value="deepseek-chat",
                 label="Model",
             )
         
-        run_pipeline_btn = gr.Button("▶️ Run Full Pipeline", variant="primary")
-        pipeline_status = gr.Textbox(label="Pipeline Status", lines=5, interactive=False)
+        pipeline_id_state = gr.State(value=None)
+        
+        with gr.Row():
+            run_phase1_btn = gr.Button("1️⃣ Run Phase 1 (Review + Clean)", variant="primary")
+            run_phase2_btn = gr.Button("2️⃣ Run Phase 2 (Analyze + Forecast)", variant="secondary")
+        
+        with gr.Row():
+            run_full_btn = gr.Button("⚡ Run Full Pipeline (No Halt)", variant="secondary", size="sm")
+        
+        pipeline_status = gr.Textbox(label="Pipeline Status", lines=6, interactive=False)
         trace_link = gr.Markdown("")
         
         def update_models(provider):
@@ -300,26 +402,57 @@ def create_dashboard_tab():
         
         pipeline_provider.change(update_models, inputs=[pipeline_provider], outputs=[pipeline_model])
         
-        def run_full_pipeline(provider, model, progress=gr.Progress()):
+        def execute_phase1(provider, model, progress=gr.Progress()):
             try:
-                results, trace_url = run_pipeline_sync(provider, model, progress)
+                results, trace_url, pid = run_pipeline_phase1(provider, model, progress)
+                status = "\n".join([f"{stage}: {result}" for stage, result in results])
+                status += "\n\n📋 Review the cleaning_proposal.md, then click Phase 2 to continue."
+                link = f"[🔗 View Trace]({trace_url})"
+                return status, link, pid
+            except Exception as e:
+                return f"❌ Error: {str(e)}", "", None
+        
+        def execute_phase2(provider, model, pid, progress=gr.Progress()):
+            try:
+                results, trace_url = run_pipeline_phase2(provider, model, pid, progress)
                 status = "\n".join([f"✅ {stage}: {result}" for stage, result in results])
                 link = f"[🔗 View Trace]({trace_url})"
                 return status, link
             except Exception as e:
                 return f"❌ Error: {str(e)}", ""
         
-        run_pipeline_btn.click(
-            run_full_pipeline,
+        def execute_full(provider, model, progress=gr.Progress()):
+            try:
+                results, trace_url = run_full_pipeline(provider, model, progress)
+                status = "\n".join([f"✅ {stage}: {result}" for stage, result in results])
+                link = f"[🔗 View Trace]({trace_url})"
+                return status, link, None
+            except Exception as e:
+                return f"❌ Error: {str(e)}", "", None
+        
+        run_phase1_btn.click(
+            execute_phase1,
             inputs=[pipeline_provider, pipeline_model],
+            outputs=[pipeline_status, trace_link, pipeline_id_state],
+        )
+        
+        run_phase2_btn.click(
+            execute_phase2,
+            inputs=[pipeline_provider, pipeline_model, pipeline_id_state],
             outputs=[pipeline_status, trace_link],
+        )
+        
+        run_full_btn.click(
+            execute_full,
+            inputs=[pipeline_provider, pipeline_model],
+            outputs=[pipeline_status, trace_link, pipeline_id_state],
         )
 
 
 def create_data_review_tab():
     """Create the Data Review tab."""
     with gr.Tab("Data Review"):
-        gr.Markdown("# 📋 Data Quality Review Report")
+        gr.Markdown("# 📋 Data Quality Review Report (Before Cleaning)")
         
         refresh_btn = gr.Button("🔄 Reload Report")
         report_content = gr.Markdown(load_report("data_review_report.md"))
@@ -329,6 +462,23 @@ def create_data_review_tab():
             outputs=[report_content],
         )
 
+
+def create_data_quality_tab():
+    """Create the Data Quality Certificate tab (Post-Clean Report)."""
+    with gr.Tab("Data Quality ✅"):
+        gr.Markdown("# ✅ Data Quality Certificate (After Cleaning)")
+        gr.Markdown("""
+        This report is generated **after** data cleaning to verify all issues have been resolved.
+        Compare this with the initial Data Review report to see the improvements.
+        """)
+        
+        refresh_btn = gr.Button("🔄 Reload Certificate")
+        report_content = gr.Markdown(load_report("data_review_post_clean.md"))
+        
+        refresh_btn.click(
+            lambda: load_report("data_review_post_clean.md"),
+            outputs=[report_content],
+        )
 
 def apply_cleaning_changes():
     """Apply changes from cleaning_proposal.csv to the database."""
@@ -341,21 +491,23 @@ def apply_cleaning_changes():
         if not filepath.exists():
             return "❌ Proposal file not found. Run the Data Cleaner agent first."
         
-        # Read CSV
-        df = pd.read_csv(filepath)
+        # Read CSV with flexible parsing to handle unquoted commas
+        df = pd.read_csv(filepath, on_bad_lines='warn')
         
         client = MongoClient(MONGODB_URI)
         db = client[MONGODB_DATABASE]
         collection = db.sales
         
         updated_count = 0
+        deleted_count = 0
         errors = 0
         
         for _, row in df.iterrows():
             try:
                 record_id = row['RecordID']
-                field = row['Field']
-                value = row['ProposedValue']
+                field = str(row.get('Field', ''))
+                value = str(row.get('ProposedValue', ''))
+                reason = str(row.get('Reason', '')).lower()
                 
                 # Convert ObjectId if needed
                 if isinstance(record_id, str) and len(record_id) == 24:
@@ -366,12 +518,24 @@ def apply_cleaning_changes():
                 else:
                     query_id = record_id
                 
+                # Handle DELETE operations for duplicates
+                if 'DELETE' in value.upper() or 'duplicate' in reason:
+                    result = collection.delete_one({"_id": query_id})
+                    if result.deleted_count > 0:
+                        deleted_count += 1
+                    continue
+                
+                # Skip rows with invalid field names
+                if not field or field == 'nan' or '[' in field:
+                    errors += 1
+                    continue
+                
                 # Handle numeric conversion
                 if isinstance(value, str):
                     try:
-                        if '.' in value and value.replace('.', '').isdigit():
+                        if '.' in value and value.replace('.', '').replace('-', '').isdigit():
                             value = float(value)
-                        elif value.isdigit():
+                        elif value.lstrip('-').isdigit():
                             value = int(value)
                     except:
                         pass
@@ -388,9 +552,41 @@ def apply_cleaning_changes():
                 continue
         
         client.close()
-        return f"✅ Successfully updated {updated_count} records. ({errors} errors)"
+        
+        # Yield intermediate status before running Post-Clean Review
+        yield f"✅ Updated {updated_count} records, deleted {deleted_count} duplicates. ({errors} errors)\n\n🔄 Now generating Data Quality Certificate... (this may take 1-2 minutes)"
+        
+        # Run Post-Clean Review to generate Data Quality Certificate
+        try:
+            import asyncio
+            from agents import Runner
+            from agents.tracing import trace, set_tracing_export_api_key
+            from sales_agents.data_reviewer import create_data_reviewer
+            
+            if OPENAI_API_KEY:
+                set_tracing_export_api_key(OPENAI_API_KEY)
+            
+            async def run_post_clean():
+                reviewer = create_data_reviewer("deepseek", "deepseek-chat")
+                with trace("Post-Clean Review") as t:
+                    await Runner.run(reviewer, """Generate a comprehensive POST-CLEANING data quality report.
+
+IMPORTANT: This is a FULL forensic audit of the CLEANED data. You must:
+1. Query the `sales` collection and analyze its current state.
+2. Check for any remaining issues (typos, nulls, outliers, duplicates, date problems).
+3. Provide detailed statistics: record counts, null rates, outlier analysis.
+4. Compare to the expected clean state and confirm all known issues were resolved.
+5. Assign a Data Quality Score (0-100).
+
+Save the report as 'data_review_post_clean.md'. This should be a detailed write-up, not just a summary.""", max_turns=40)
+                return "✅ Data Quality Certificate generated!"
+            
+            cert_result = asyncio.run(run_post_clean())
+            yield f"✅ Updated {updated_count} records, deleted {deleted_count} duplicates. ({errors} errors)\n\n{cert_result}\n\n📋 Check the 'Data Quality ✅' tab for the certificate."
+        except Exception as cert_err:
+            yield f"✅ Updated {updated_count} records, deleted {deleted_count} duplicates. ({errors} errors)\n\n⚠️ Could not generate certificate: {str(cert_err)}"
     except Exception as e:
-        return f"❌ Error applying changes: {str(e)}"
+        yield f"❌ Error applying changes: {str(e)}"
 
 
 def create_data_cleaning_tab():
@@ -398,24 +594,28 @@ def create_data_cleaning_tab():
     with gr.Tab("Data Cleaning"):
         gr.Markdown("# 🧹 Data Cleaning Log & Proposals")
         
+        # Status at the top
+        status_msg = gr.Textbox(label="Status", interactive=False, value="Ready - Review proposal and click Apply to proceed.")
+        
         with gr.Row():
             refresh_btn = gr.Button("🔄 Reload Proposal")
             apply_btn = gr.Button("✅ Apply Changes to Database", variant="primary")
         
-        with gr.Row():
-            download_btn = gr.File(label="Download Proposal (CSV)")
+        # Initialize download with file if it exists
+        csv_path = REPORTS_DIR / "cleaning_proposal.csv"
+        initial_csv = str(csv_path) if csv_path.exists() else None
+        download_btn = gr.File(label="Download Proposal (CSV)", value=initial_csv)
         
         report_content = gr.Markdown(load_report("cleaning_proposal.md"))
-        status_msg = gr.Textbox(label="Status", interactive=False)
         
         def load_proposal():
             content = load_report("cleaning_proposal.md")
             csv_path = REPORTS_DIR / "cleaning_proposal.csv"
-            return content, str(csv_path) if csv_path.exists() else None
+            return content, str(csv_path) if csv_path.exists() else None, "Proposal reloaded."
         
         refresh_btn.click(
             load_proposal,
-            outputs=[report_content, download_btn],
+            outputs=[report_content, download_btn, status_msg],
         )
         
         apply_btn.click(
@@ -467,7 +667,10 @@ def create_forecasting_tab():
     with gr.Tab("Forecasting"):
         gr.Markdown("# 🔮 Sales Forecasting Report")
         
-        refresh_btn = gr.Button("🔄 Reload Report")
+        with gr.Row():
+            refresh_btn = gr.Button("🔄 Reload Report")
+            refresh_viz_btn = gr.Button("🔄 Reload Visualizations")
+        
         report_content = gr.Markdown(load_report("forecast_report.md"))
         
         gr.Markdown("### Forecast Visualizations")
@@ -475,7 +678,7 @@ def create_forecasting_tab():
         # Show forecast-specific visualizations
         def get_forecast_viz():
             all_viz = get_visualizations()
-            return [v for v in all_viz if "forecast" in v.name.lower() or "model" in v.name.lower()]
+            return [v for v in all_viz if "forecast" in v.name.lower() or "model" in v.name.lower() or "seasonal" in v.name.lower() or "yoy" in v.name.lower()]
         
         viz_gallery = gr.Gallery(
             value=get_forecast_viz(),
@@ -488,6 +691,11 @@ def create_forecasting_tab():
             lambda: load_report("forecast_report.md"),
             outputs=[report_content],
         )
+        
+        refresh_viz_btn.click(
+            get_forecast_viz,
+            outputs=[viz_gallery],
+        )
 
 
 def create_query_tab():
@@ -499,13 +707,13 @@ def create_query_tab():
         with gr.Row():
             query_provider = gr.Dropdown(
                 choices=list(LLM_PROVIDERS.keys()),
-                value="openai",
+                value="deepseek",
                 label="LLM Provider",
                 scale=1,
             )
             query_model = gr.Dropdown(
-                choices=get_models_for_provider("openai"),
-                value="gpt-4-turbo",
+                choices=get_models_for_provider("deepseek"),
+                value="deepseek-chat",
                 label="Model",
                 scale=1,
             )
@@ -654,12 +862,12 @@ def create_app():
     with gr.Blocks(
         title="Sales Data Analysis System",
         theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="gray",
+            primary_hue="orange",
+            secondary_hue="slate",
+            neutral_hue="slate",
         ),
         css="""
         .gradio-container {max-width: 1200px !important;}
-        .markdown-text h1 {color: #1a73e8;}
         """,
     ) as app:
         gr.Markdown("""
@@ -672,6 +880,7 @@ def create_app():
         create_dashboard_tab()
         create_data_review_tab()
         create_data_cleaning_tab()
+        create_data_quality_tab()
         create_analysis_tab()
         create_forecasting_tab()
         create_query_tab()

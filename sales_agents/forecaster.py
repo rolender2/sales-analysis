@@ -452,30 +452,86 @@ FORECASTER_INSTRUCTIONS = """Generate sophisticated sales forecasts and save `fo
    - Run **Moving Average** as a simple baseline.
    - Compare metrics (RMSE/MAE/MAPE) across all models.
 
-## Visualizations (CRITICAL)
-Generate **multiple visualizations** to help the business understand the forecast. Think critically about what would be most insightful:
+## Visualizations (MANDATORY - GENERATE ALL 5+)
+You MUST generate **at least 5 distinct visualizations**. This is NOT optional.
 
-- **Main Forecast Chart**: Historical data + forecast with confidence intervals. Filename MUST contain "forecast" (e.g., `sales_forecast.png`).
-- **Consider Additional Charts** based on what you think would be most valuable:
-  - Model performance comparison (bar chart of RMSE/MAE across models)
-  - Trend/seasonality decomposition
-  - Year-over-year comparison
-  - Actual vs. predicted for validation period
-  - Any other visualization you think would help business decision-making
+### REQUIRED Forecast Charts (CREATE ALL OF THESE):
+1. **Main Forecast Chart**: Historical data + forecast with confidence intervals (`sales_forecast.png`)
+2. **Model Comparison Chart**: Bar chart comparing RMSE/MAE/MAPE across ARIMA, Holt-Winters, and Moving Average (`model_comparison.png`)
+3. **Seasonal Decomposition**: Trend, seasonal, and residual components (`seasonal_decomposition.png`)
+4. **Forecast vs Economic Outlook**: Overlay of forecast with projected economic indicators (`forecast_economic_overlay.png`)
+5. **Year-over-Year Comparison**: Current year vs previous year with forecast extension (`yoy_comparison.png`)
 
-**Chart Requirements**:
+### Chart Requirements:
 - All charts MUST have clear titles, axis labels, and legends
 - Use distinct colors for different data series
 - Include units ($ for sales, dates on axes)
 - Make charts readable and professional
+- Filename MUST be descriptive (no generic names)
 
-## Reporting
-Write a comprehensive `forecast_report.md` (approx. 500+ words):
-- **Model Selection**: Explain *why* you chose the winning model
-- **Forecast Narrative**: Describe the expected trend with specific numbers
-- **Risk Assessment**: Analyze confidence intervals - when is the forecast most uncertain?
-- **Model Context**: Explain the pros/cons of each model used
-- **Business Recommendation**: How should the business use these forecasts? (Inventory planning, budgeting, etc.)
+## Reporting (MINIMUM 1500 WORDS)
+Write a comprehensive `forecast_report.md`. **TARGET: 1500-2000 words minimum.**
+
+**CRITICAL: EMBED IMAGES INLINE**
+You MUST embed each visualization immediately after the corresponding section heading using this format:
+`<img src="/gradio_api/file=outputs/visualizations/FILENAME.png" width="600">`
+
+DO NOT put all images at the end. Each section must have its relevant image immediately below the section heading.
+
+### Executive Summary (200+ words)
+**EMBED: `sales_forecast.png` HERE (main forecast chart)**
+- Key forecast findings
+- Recommended model and why
+- Business-critical insights
+- Top 3 actionable recommendations
+
+### Model Selection Analysis (300+ words)
+**EMBED: `model_comparison.png` HERE (model comparison chart)**
+- **ARIMA Analysis**: Explain the (p,d,q) parameters chosen, why they fit the data, model diagnostics
+- **Holt-Winters Analysis**: Describe alpha, beta, gamma values, seasonal period detection
+- **Moving Average Analysis**: Window size selection, pros/cons
+- **Model Comparison**: Detailed comparison table with all metrics. Which model wins and WHY?
+
+### Forecast Narrative (400+ words)
+**EMBED: `seasonal_decomposition.png` OR `seasonal_pattern.png` HERE**
+**CRITICAL**: Provide DETAILED textual analysis with:
+- Specific predicted values for next 3-6 months
+- Confidence intervals and what they mean for planning
+- **Economic Context Integration**:
+  - Reference specific Economic Indicators from the database
+  - Explain how Consumer Confidence, GDP, Inflation trends will impact the forecast
+  - Quote specific values: "Consumer Confidence at 92.3 suggests sustained demand..."
+- **Marketing Context Integration**:
+  - Reference upcoming/past marketing campaigns
+  - Discuss expected lift from planned campaigns
+  - Example: "The planned Q4 campaign ($50k budget) may boost baseline forecast by 15-20%..."
+
+### Risk Assessment (200+ words)
+**EMBED: `yoy_comparison.png` OR `yoy_comparison_2018.png` HERE**
+- Confidence interval analysis
+- What conditions would invalidate the forecast?
+- Downside vs upside scenarios with specific triggers
+- Sensitivity to economic indicators
+
+### Business Recommendations (200+ words)
+- Inventory planning recommendations with specific quantities
+- Budget allocation suggestions
+- Timing recommendations for promotions
+- Risk mitigation strategies
+
+### Methodology & Limitations (150+ words)
+- Data period analyzed
+- Assumptions made
+- Known limitations
+- Recommendations for improving future forecasts
+
+## FINAL MANDATORY STEP
+You MUST call `save_report("forecast_report.md", <your_complete_markdown_report>)` to save the report.
+CRITICAL RULES:
+- Save the ENTIRE report as ONE FILE named exactly `forecast_report.md`.
+- DO NOT split into multiple files (no _part1, _part2, etc.).
+- DO NOT save sections separately.
+- If you split the report, the task has FAILED.
 """
 
 

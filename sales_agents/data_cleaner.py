@@ -17,6 +17,7 @@ from sales_agents.tools import (
     query_mongodb,
     save_report,
     get_collection_stats,
+    fix_date_formats,
 )
 from config import get_model_string, MONGODB_DATABASE
 
@@ -26,27 +27,40 @@ from config import get_model_string, MONGODB_DATABASE
 
 DATA_CLEANER_INSTRUCTIONS = """Analyze the `sales` collection for data quality issues and create a cleaning proposal.
 
-## Workflow
-1. **Analyze**: Use `query_mongodb` and `get_collection_stats` to find issues (e.g., string 'Sales' that should be numbers, inconsistent variations of 'Region', null values).
-2. **Propose**: Generate a CSV file (`cleaning_proposal.csv`) containing record-level changes.
-3. **Summarize**: Generate a Markdown report (`cleaning_proposal.md`) summarizing the findings.
+## CRITICAL: Avoid Context Overflow
+- NEVER query more than 100 records at once.
+- Use `limit` parameter in all queries.
+- Use aggregation pipelines with $sample, $match, and $limit.
+- For defect detection, query specific conditions (e.g., {State: {$regex: "typo"}}) rather than scanning all.
 
-## Output Format
-### 1. CSV Proposal (`cleaning_proposal.csv`)
+## 1. Detect & Fix Defects
+
+### Step 1: Bulk Date Fix (Do This FIRST)
+Call `fix_date_formats("sales", "Order Date")` immediately. This handles 5,000+ date issues efficiently.
+
+### Step 2: Targeted Defect Queries (Use LIMIT 100)
+- **Typos**: Query `{State: {$regex: "_typo|Californa|Ohhio", $options: "i"}, limit: 100}`.
+- **Nulls**: Query `{$or: [{Region: null}, {Category: null}, {Segment: null}], limit: 100}`.
+- **Outliers**: Query `{Sales: {$gt: 50000}, limit: 100}` to find extreme values.
+- **Duplicates**: Use aggregation: `[{$group: {_id: {fields...}, count: {$sum: 1}}}, {$match: {count: {$gt: 1}}}, {$limit: 50}]`.
+
+## 2. Generate Proposal
+MANDATORY: You MUST create BOTH files:
+1. `cleaning_proposal.csv` - Contains all defect records with columns: RecordID, Field, CurrentValue, ProposedValue, Reason
+2. `cleaning_proposal.md` - Summary of issues found
+
+### A. CSV Proposal (`cleaning_proposal.csv`)
 Columns: `RecordID`, `Field`, `CurrentValue`, `ProposedValue`, `Reason`
-- **RecordID**: The `_id` of the document.
-- **Field**: The field name to update.
-- **Reason**: Why the change is needed.
+- Maximum 200 rows in the CSV (if more defects exist, note in markdown).
 
-Use `save_report("cleaning_proposal.csv", csv_content, "text")` to save this file.
-*Example*:
-`RecordID,Field,CurrentValue,ProposedValue,Reason`
-`507f1f77bcf86cd799439011,Sales,"1,200.00",1200.00,"Convert string to number"`
-
-### 2. Markdown Summary (`cleaning_proposal.md`)
+### B. Markdown Summary (`cleaning_proposal.md`)
 - Summary of issues found.
 - Table showing count of proposed changes by type.
 - Sample of 5 records from the proposal.
+
+FINAL STEPS (MANDATORY):
+1. Call `save_report("cleaning_proposal.csv", <csv_content>)`
+2. Call `save_report("cleaning_proposal.md", <markdown_content>)`
 """
 
 
@@ -72,7 +86,7 @@ def create_data_cleaner(provider: str = "openai", model: str = None) -> Agent:
         name="DataCleaner",
         model=model_string,
         instructions=DATA_CLEANER_INSTRUCTIONS,
-        tools=[query_mongodb, save_report, get_collection_stats],
+        tools=[query_mongodb, save_report, get_collection_stats, fix_date_formats],
     )
 
 

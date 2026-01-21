@@ -80,8 +80,8 @@ def query_mongodb(
         client = _get_mongo_client()
         db = client[database]
         
-        # Cap limit to prevent context overflow
-        limit = min(limit, 10)
+        # Cap limit to prevent context overflow (increased to 100 for bulk cleaning)
+        limit = min(limit, 100)
         
         # Add limit stage if not present
         if not any("$limit" in stage for stage in pipeline):
@@ -255,8 +255,10 @@ def save_report(
             filename = f"{filename}.md"
         elif report_type == "json" and not filename.endswith(".json"):
             filename = f"{filename}.json"
-        elif report_type == "text" and not filename.endswith(".txt"):
-            filename = f"{filename}.txt"
+        elif report_type == "text":
+            # Allow csv to pass through without appending .txt
+            if not filename.endswith(".txt") and not filename.endswith(".csv"):
+                filename = f"{filename}.txt"
         
         filepath = REPORTS_DIR / filename
         
@@ -453,3 +455,56 @@ def create_dataframe_visualization(
             "success": False,
             "error": str(e),
         }
+
+
+@function_tool
+def fix_date_formats(collection: str, target_field: str = "Order Date") -> dict:
+    """
+    Apply a bulk fix to standardized date formats.
+    It takes strings like '15/04/2018' (Day/Month/Year) and converts them to standard '04/15/2018' (Month/Day/Year).
+    
+    Use this when you detect systematic "Swapped Date" issues affecting thousands of records.
+    It is much more efficient than listing 5,000 updates in a CSV.
+    
+    Args:
+        collection: The collection to update (e.g. 'sales')
+        target_field: The field with date issues (e.g. 'Order Date')
+        
+    Returns:
+        Summary of how many records were updated.
+    """
+    try:
+        updated_count = 0
+        client = _get_mongo_client()
+        db = client[MONGODB_DATABASE]
+        col = db[collection]
+        
+        # Iterate and fix
+        cursor = col.find({})
+        
+        for doc in cursor:
+            val = doc.get(target_field)
+            if not isinstance(val, str):
+                continue
+                
+            try:
+                parts = val.split('/')
+                if len(parts) == 3:
+                    p1, p2, p3 = int(parts[0]), int(parts[1]), int(parts[2])
+                    
+                    # If First Part > 12, it MUST be Day. So it is DD/MM/YYYY.
+                    # We want to swap to MM/DD/YYYY.
+                    if p1 > 12 and p2 <= 12:
+                         new_val = f"{p2:02d}/{p1:02d}/{p3}"
+                         col.update_one({"_id": doc["_id"]}, {"$set": {target_field: new_val}})
+                         updated_count += 1
+            except:
+                continue
+                
+        return {
+            "status": "success",
+            "message": f"Scanned collection. Swapped Day/Month for {updated_count} records where Day > 12.",
+            "records_updated": updated_count
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
